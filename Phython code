@@ -1,0 +1,179 @@
+from qiskit import *
+from qiskit.visualization import plot_histogram
+import math
+
+
+#super position in the first reg
+def super_pos(qc,n_qubit):
+    for qubit in range(n_qubit):
+         qc.h(qubit)
+    return qc
+
+#initialize the second reg
+def one_state(qc,n_qubit,n_first):
+    for qubit in range(n_qubit):
+        qc.x(n_first+qubit)
+    return qc
+
+
+#phase estimation procedure
+def phase_ext(qc,n_first,n_second,a):
+    mul=1
+    for one_qubit  in range(n_first):
+        for i in range(mul):
+            for second_qubit in range(n_second):
+                qc.cu1(a,n_first-one_qubit-1,n_first+second_qubit)
+        mul *=2
+    return qc
+
+#inverse QFT
+def qft_inv(qc,n_first,a):
+    # swap
+    for qubit in range(n_first// 2):  # floor division
+        qc.swap(qubit, n_first - qubit - 1)
+    # rephase
+    for i in range(n_first):
+        for j in range(i):
+            qc.cu1( 2*a / float(2 ** (i - j)), j, i)
+        qc.h(i)
+    return qc
+
+#measure first reg
+def measure (qc,n_qubit):
+    bit=0
+    for qubit in range(n_qubit):
+        qc.measure(qubit,bit)
+        bit +=1
+    return qc
+
+#continuos fractions of the phase of the result measurment
+def cont_fraction(n,d):
+    if d == 0: return []
+    q = n//d
+    r = n - q*d
+    return [q] + cont_fraction(d,r)
+
+
+#find the convergent of the continuos fractons
+def find_converget(list,a,n):
+    i=0
+    r=0
+    list_p=[]
+    list_q=[]
+    p=list[i]
+    list_p.append(p)
+    q=1
+    list_q.append(q)
+    #print("passo0",list_p, list_q)
+    if (a**q)%n == 1 :
+        r=q
+        return r
+    p=1+(list[i]*list[i+1])
+    list_p.append(p)
+    q=list[1]
+    list_q.append(q)
+    #print("passo1",list_p, list_q)
+    if(a**q)%n == 1 :
+        r=q
+        return r
+    else:
+        j=2
+        for i in range(len(list)-2):
+            p=list[j]*list_p[j-1]+list_p[j-2]
+            list_p.append(p)
+            q=list[j]*list_q[j-1]+list_q[j-2]
+            list_q.append(q)
+            #print("passoj:", j, list_p, list_q)
+            j +=1
+            if (a**q)%n == 1 :
+                r=q
+                return r
+    print("failure convergent")
+    return r
+
+#control the order
+def control_order (r,a,n):
+    #r is odd or
+    if  r%2 != 0 :
+        return "failure order odd"
+    #r is even
+    if (a**(r//2)) % n == -1 :
+        return "failure order mod -1"
+    return "order ok "
+
+# factors cpmputation
+def find_factor(order,a,n):
+    fact_1 = math.gcd(int((a**(order//2)))-1,n)
+    fact_2 = math.gcd(int((a**(order//2)))+1,n)
+    if n % fact_1 == 0:
+        #print("fact1",fact_1)
+        fact_2  = int(n//fact_1)
+        return (fact_1,fact_2)
+    elif n % fact_2 == 0:
+        #print("fact2", fact_2)
+        fact_1 = int(n // fact_2)
+        return (fact_1,fact_2)
+    else:
+        return "failure factor"
+
+
+#n is the number to factorize , a is the base , e number of simulations
+def shor_alg(n,a,e):
+
+    # number of bit to represent n
+    bit = bin(n)
+    m = len(bit[2:])
+
+    # configure the circuit
+    n_first = 2 * m
+    n_second = m
+    n_classical = n_first
+
+    for i in range (e):
+        s_circuit = QuantumCircuit(n_first + n_second, n_classical)
+
+        super_pos(s_circuit, n_first)
+        one_state(s_circuit, n_second, n_first)
+        s_circuit.barrier()
+
+        phase_ext(s_circuit, n_first, n_second, a)
+        s_circuit.barrier()
+
+        qft_inv(s_circuit, n_first, a)
+        s_circuit.barrier()
+
+        measure(s_circuit, n_first)
+
+        # print(s_circuit)
+
+        # start simulation
+        backend = Aer.get_backend('qasm_simulator')
+        shots = 2048
+        results = execute(s_circuit, backend=backend, shots=shots).result()
+        answer = results.get_counts()
+
+        #print(answer)
+
+        plot_histogram(answer).show()
+
+        # read the data
+        # return the count of the most pr state
+        max_cont = max(answer.values())
+        total_shot = shots
+
+        phase_continuous = cont_fraction(max_cont, total_shot)
+
+        order = find_converget(phase_continuous, a, n)
+
+        order_status = control_order(order, a, n)
+        print(order_status ,     order)
+
+        #print("fattorizzare:", n, "base:", a, "ordine:", order)
+
+        # print("verifica che a^r mod N=", (a ** order) % n)
+
+        factors = find_factor(order, a, n)
+
+        print("fattore di n :", factors)
+        print("\n")
+
